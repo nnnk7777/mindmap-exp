@@ -1,17 +1,32 @@
 <template>
   <div class="home">
-    <v-network-graph
-      :nodes="nodes"
-      :edges="edges"
-      :layouts="layouts"
-      :configs="configs"
-      @click="clickedView"
-    />
+    <div v-if="this.loaded" style="background-color: powderblue; height: 60vh">
+      <v-network-graph
+        :nodes="nodes"
+        :edges="edges"
+        :layouts="layouts"
+        :configs="configs"
+        :event-handlers="eventHandlers"
+      />
+    </div>
   </div>
 </template>
 
 <script>
 import { GridLayout } from "v-network-graph";
+
+import {
+  getFirestore,
+  collection,
+  doc,
+  addDoc,
+  getDoc,
+  getDocs,
+  setDoc,
+  query,
+  where,
+  onSnapshot,
+} from "firebase/firestore";
 
 export default {
   name: "Home",
@@ -24,7 +39,6 @@ export default {
           Parent: null,
           Shape: "rect",
           Color: "#cc4444",
-          Draggable: false,
           User: null,
         },
         {
@@ -63,48 +77,65 @@ export default {
           Parent: 3,
           User: "nonaka",
         },
+        {
+          ID: 7,
+          Label: "node7",
+          Parent: 6,
+          User: "nonaka",
+        },
       ],
+      eventHandlers: null,
+      fireData: null,
+      fireDB: null,
+      mapName: "test1",
+      loaded: false,
     };
+  },
+  methods: {
+    clickedNode(e) {
+      console.log(e);
+    },
   },
   computed: {
     nodes() {
       let _nodes = {};
-      this.data.forEach((d) => {
-        let tmp = {};
-        tmp.name = d.Label;
-        if (d.Shape) tmp.type = d.Shape;
-        if (d.Color) tmp.color = d.Color;
-        if (d.Draggable != null) tmp.draggable = d.Draggable;
-        _nodes[`node${d.ID}`] = tmp;
-      });
+      if (this.fireData.length > 0) {
+        this.fireData.forEach((d) => {
+          let tmp = {};
+          tmp.name = d.Label;
+          if (d.Shape) tmp.type = d.Shape;
+          if (d.Color) tmp.color = d.Color;
+          if (d.Draggable != null) tmp.draggable = d.Draggable;
+          _nodes[`node${d.ID}`] = tmp;
+        });
+      }
       return _nodes;
     },
     edges() {
       let _edges = {};
-      this.data.forEach((d) => {
-        if (d.Parent != null) {
-          let tmp = {};
-          tmp.source = `node${d.Parent}`;
-          tmp.target = `node${d.ID}`;
-          _edges[`edge${d.ID}`] = tmp;
-        }
-      });
+      if (this.fireData.length > 0) {
+        this.fireData.forEach((d) => {
+          if (d.Parent != null) {
+            let tmp = {};
+            tmp.source = `node${d.Parent}`;
+            tmp.target = `node${d.ID}`;
+            _edges[`edge${d.ID}`] = tmp;
+          }
+        });
+      }
       return _edges;
     },
     layouts() {
-      // let _layouts = {};
-      // 下のようなレイアウトをthis.dataから生成する
-      return {
-        nodes: {
-          node0: { x: 0, y: 0 },
-          node1: { x: 100, y: 50 },
-          node2: { x: -50, y: 50 },
-          node3: { x: 100, y: -50 },
-          node4: { x: -100, y: 50 },
-          node5: { x: 180, y: -100 },
-          node6: { x: 180, y: 0 },
-        },
-      };
+      let _layouts = {};
+      if (this.fireData.length > 0) {
+        this.fireData.forEach((d) => {
+          let tmp = {};
+          tmp.x = d.PosX;
+          tmp.y = d.PosY;
+          _layouts[`node${d.ID}`] = tmp;
+        });
+      }
+      return { nodes: _layouts };
     },
     configs() {
       return {
@@ -119,6 +150,60 @@ export default {
         },
       };
     },
+  },
+  watch: {
+    async fireData() {
+      let setLoaded = async (bool) => {
+        this.loaded = bool;
+      };
+      await setLoaded(false);
+      await setLoaded(true);
+    },
+  },
+  async created() {
+    const db = getFirestore();
+
+    const queryForCheck = query(
+      collection(db, "nodes"),
+      where("MapName", "==", this.mapName)
+    );
+    const isEmptyDocument = await getDocs(queryForCheck);
+    if (isEmptyDocument.empty) {
+      addDoc(collection(db, "nodes"), {
+        Color: "#cc4444",
+        Label: "root",
+        MapName: "test1",
+        Parent: null,
+        PosX: 0,
+        PosY: 0,
+        Shape: "rect",
+        Type: null,
+        User: null,
+      });
+    }
+
+    const q = query(
+      collection(db, "nodes"),
+      where("MapName", "==", this.mapName)
+    );
+    this.fireDB = onSnapshot(q, (querySnapshot) => {
+      this.loaded = false;
+      let tmp = [];
+      querySnapshot.forEach((doc) => {
+        tmp.push(doc.data());
+      });
+      this.fireData = tmp;
+      this.loaded = true;
+    });
+
+    this.eventHandlers = {
+      "node:click": ({ node }) => {
+        console.log(node);
+      },
+    };
+  },
+  destroyed() {
+    this.fireDB();
   },
 };
 </script>
