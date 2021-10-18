@@ -18,11 +18,8 @@ import { GridLayout } from "v-network-graph";
 import {
   getFirestore,
   collection,
-  doc,
   addDoc,
-  getDoc,
   getDocs,
-  setDoc,
   query,
   where,
   onSnapshot,
@@ -146,7 +143,7 @@ export default {
           },
         },
         view: {
-          layoutHandler: new GridLayout({ grid: 20 }),
+          layoutHandler: new GridLayout({ grid: 10 }),
         },
       };
     },
