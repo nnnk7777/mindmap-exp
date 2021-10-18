@@ -248,7 +248,7 @@ export default {
 
       this.eventHandlers = {
         "node:click": ({ node }) => {
-          console.log(node);
+          // 現在選択されているノードのIDを取得
           this.selectedNodeID = node.replace("node", "");
         },
         "node:dragend": async (node) => {
