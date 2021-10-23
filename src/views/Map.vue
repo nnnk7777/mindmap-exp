@@ -7,11 +7,44 @@
           :nodes="nodes"
           :edges="edges"
           :layouts="layouts"
+          :layers="layers"
           :configs="configs"
           :event-handlers="eventHandlers"
-        />
+        >
+          <!-- Replace the node component -->
+          <template #override-node="{ nodeId, scale, config, ...slotProps }">
+            <circle
+              v-if="nodes[nodeId].type == 'circle'"
+              :r="config.radius * scale"
+              :fill="config.color"
+              v-bind="slotProps"
+            />
+            <rect
+              v-else-if="nodes[nodeId].type == 'rect'"
+              :x="0 - config.radius"
+              :y="0 - config.radius"
+              rx="5"
+              ry="5"
+              :width="config.radius * 2"
+              :height="config.radius * 2"
+              :fill="config.color"
+              v-bind="slotProps"
+            />
+            <!-- Use v-html to interpret escape sequences for icon characters. -->
+            <text
+              font-family="Material Icons"
+              :font-size="22 * scale"
+              fill="#ffffff"
+              text-anchor="middle"
+              dominant-baseline="central"
+              style="pointer-events: none"
+              v-html="nodes[nodeId].icon"
+            />
+          </template>
+        </v-network-graph>
         <!-- 右のUIパネル -->
         <div class="formPanel">
+          <p>マップ名: {{ this.mapName }}</p>
           <p>you are {{ this.userRole }}</p>
           <!-- 追加するノードの親の名前 -->
           <p style="font-weight: bold; display: flex; flex-direction: column">
@@ -55,6 +88,28 @@
 
           <!-- 追加ボタン -->
           <button @click="addNewNode()">Add</button>
+
+          <!-- いいね機能 -->
+          <div v-if="this.selectedNode">
+            <p style="font-weight: bold;">
+              いいねされてるかどうか
+            </p>
+            <p>
+              {{
+                this.selectedNode.Favorited
+                  ? "いいねされてる"
+                  : "いいねされてない"
+              }}
+            </p>
+
+            <button
+              v-if="this.selectedNode.Favorited == false"
+              @click="handleFavorite()"
+            >
+              いいね！
+            </button>
+            <button v-else @click="handleUnfavorite()">いいね取り消し</button>
+          </div>
         </div>
       </div>
     </div>
@@ -87,11 +142,14 @@ export default {
     return {
       eventHandlers: null,
       fireData: null,
+      fireDataTurn: null,
       fireDB: null,
+      fireDBTurn: null,
       loaded: false,
+      loadedTurn: false,
       selectedNodeID: null,
       newNodeLabel: null,
-      newNodeShape: null,
+      newNodeShape: "circle",
     };
   },
   methods: {
@@ -119,10 +177,62 @@ export default {
           PosY: this.selectedNode.PosY + diffY,
           Shape: this.newNodeShape,
           User: this.userName,
+          Favorited: false,
+          CreatedAt: new Date(),
+        });
+
+        addDoc(collection(db, "s"), {
+          MapName: this.mapName,
+          User: this.userName,
+          NodeID: this.fireData.length,
+          Reaction: "add_node",
+          CreatedAt: new Date(),
         });
       } else {
         alert("未入力の項目があります");
       }
+    },
+    async handleFavorite() {
+      const db = getFirestore();
+      // 1. Reactionsにログを追加する
+      await addDoc(collection(db, "reactions"), {
+        MapName: this.mapName,
+        User: this.userName,
+        NodeID: this.selectedNodeID,
+        Reaction: "favorite",
+        CreatedAt: new Date(),
+      });
+
+      // 2. nodesの該当データを更新する
+      let updateFirebaseDocID = this.fireData.filter((fire) => {
+        return fire.ID == this.selectedNodeID;
+      })[0].firebaseID;
+      const updateRef = doc(db, "nodes", updateFirebaseDocID);
+
+      await updateDoc(updateRef, {
+        Favorited: true,
+      });
+    },
+    async handleUnfavorite() {
+      const db = getFirestore();
+      // 1. Reactionsにログを追加する
+      await addDoc(collection(db, "reactions"), {
+        MapName: this.mapName,
+        User: this.userName,
+        NodeID: this.selectedNodeID,
+        Reaction: "unfavorite",
+        CreatedAt: new Date(),
+      });
+
+      // 2. nodesの該当データを更新する
+      let updateFirebaseDocID = this.fireData.filter((fire) => {
+        return fire.ID == this.selectedNodeID;
+      })[0].firebaseID;
+      const updateRef = doc(db, "nodes", updateFirebaseDocID);
+
+      await updateDoc(updateRef, {
+        Favorited: false,
+      });
     },
   },
   computed: {
@@ -149,9 +259,11 @@ export default {
         this.fireData.forEach((d) => {
           let tmp = {};
           tmp.name = d.Label;
+          if (d.Favorited) tmp.icon = "&#xe87d";
           if (d.Shape) tmp.type = d.Shape;
           if (d.Color) tmp.color = d.Color;
-          if (d.Draggable != null) tmp.draggable = d.Draggable;
+          if (d.Label != "root")
+            tmp.color = d.User === this.userName ? "#424dc7" : "#8fa4c7";
           _nodes[`node${d.ID}`] = tmp;
         });
       }
@@ -189,6 +301,11 @@ export default {
           normal: {
             type: (node) => node.type || "circle",
             color: (node) => node.color || "#4466cc",
+            radius: 18,
+          },
+          hover: {
+            color: (node) => node.color || "#4466cc",
+            radius: 20,
           },
         },
         view: {
@@ -205,20 +322,30 @@ export default {
       await setLoaded(false);
       await setLoaded(true);
     },
+    async fireDataTurn() {
+      let setLoaded = async (bool) => {
+        this.loadedTurn = bool;
+      };
+      await setLoaded(false);
+      await setLoaded(true);
+    },
   },
   async created() {
     const db = getFirestore();
 
     if (this.isFilledState) {
+      // nodesにこの名前のデータがすでにあるかどうか確認
       const queryForCheck = query(
         collection(db, "nodes"),
         where("MapName", "==", this.mapName)
       );
       const isEmptyDocument = await getDocs(queryForCheck);
+      // もしまだ無かったら
       if (isEmptyDocument.empty) {
+        // nodesにrootを追加
         addDoc(collection(db, "nodes"), {
           ID: 0,
-          Color: "#cc4444",
+          Color: "#282828",
           Label: "root",
           MapName: this.mapName,
           Parent: null,
@@ -230,10 +357,29 @@ export default {
         });
       }
 
+      // turnsにこの名前のデータがすでにあるかどうか確認
+      const queryForCheck2 = query(
+        collection(db, "turns"),
+        where("MapName", "==", this.mapName)
+      );
+      const isEmptyDocument2 = await getDocs(queryForCheck2);
+      // もしまだ無かったら
+      if (isEmptyDocument2.empty) {
+        // データを追加
+        // 最初はもらう側からスタート
+        addDoc(collection(db, "turns"), {
+          MapName: this.mapName,
+          Turn: "donee",
+          CreatedAt: new Date(),
+        });
+      }
+
+      // 指定したマップ名のnodesデータを取得する準備
       const q = query(
         collection(db, "nodes"),
         where("MapName", "==", this.mapName)
       );
+      // 指定したマップ名のnodesデータを取得！
       this.fireDB = onSnapshot(q, (querySnapshot) => {
         this.loaded = false;
         let tmp = [];
@@ -244,6 +390,24 @@ export default {
         });
         this.fireData = tmp;
         this.loaded = true;
+      });
+
+      // 指定したマップ名のturnsデータを取得する準備
+      const q2 = query(
+        collection(db, "turns"),
+        where("MapName", "==", this.mapName)
+      );
+      // 指定したマップ名のturnsデータを取得！
+      this.fireDBTurn = onSnapshot(q2, (querySnapshot) => {
+        this.loadedTurn = false;
+        let tmp = [];
+        querySnapshot.forEach((doc) => {
+          let obj = doc.data();
+          Object.assign(obj, { firebaseID: doc.id });
+          tmp.push(obj);
+        });
+        this.fireDataTurn = tmp;
+        this.loadedTurn = true;
       });
 
       this.eventHandlers = {
@@ -271,6 +435,7 @@ export default {
   },
   destroyed() {
     this.fireDB();
+    this.fireDBTurn();
   },
 };
 </script>
@@ -286,6 +451,6 @@ export default {
   display: flex;
   flex-direction: row;
   background-color: powderblue;
-  height: 60vh;
+  height: 90vh;
 }
 </style>
