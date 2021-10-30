@@ -45,7 +45,15 @@
         <!-- 右のUIパネル -->
         <div class="formPanel">
           <p>マップ名: {{ this.mapName }}</p>
-          <p>you are {{ this.userRole }}</p>
+          <p>
+            あなたは
+            {{ this.userRole == "donor" ? "あげる人" : "もらう人" }}です
+          </p>
+          <p>
+            今は，{{
+              this.fireDataTurn[0].Turn == "donor" ? "あげる人" : "もらう人"
+            }}のターンです
+          </p>
           <!-- 追加するノードの親の名前 -->
           <p style="font-weight: bold; display: flex; flex-direction: column">
             <span>
@@ -63,7 +71,11 @@
             <span>追加するノード名を</span>
             <span>入力してください</span>
           </p>
-          <input v-model="newNodeLabel" type="text" />
+          <input
+            v-model="newNodeLabel"
+            type="text"
+            :disabled="this.fireDataTurn[0].Turn != this.userRole"
+          />
 
           <!-- 形状の選択 -->
           <p style="font-weight: bold;">形状を選択してください</p>
@@ -74,6 +86,7 @@
               name="shape"
               id="rect"
               value="rect"
+              :disabled="this.fireDataTurn[0].Turn != this.userRole"
             />
             <label for="rect">四角</label>
             <input
@@ -82,12 +95,18 @@
               name="shape"
               id="circle"
               value="circle"
+              :disabled="this.fireDataTurn[0].Turn != this.userRole"
             />
             <label for="circle">丸</label>
           </div>
 
           <!-- 追加ボタン -->
-          <button @click="addNewNode()">Add</button>
+          <button
+            @click="addNewNode()"
+            :disabled="this.fireDataTurn[0].Turn != this.userRole"
+          >
+            Add
+          </button>
 
           <!-- いいね機能 -->
           <div v-if="this.selectedNode">
@@ -105,10 +124,27 @@
             <button
               v-if="this.selectedNode.Favorited == false"
               @click="handleFavorite()"
+              :disabled="this.fireDataTurn[0].Turn != this.userRole"
             >
               いいね！
             </button>
-            <button v-else @click="handleUnfavorite()">いいね取り消し</button>
+            <button
+              v-else
+              @click="handleUnfavorite()"
+              :disabled="this.fireDataTurn[0].Turn != this.userRole"
+            >
+              いいね取り消し
+            </button>
+          </div>
+
+          <!-- ターン終了 -->
+          <div>
+            <button
+              @click="toggleTurn()"
+              :disabled="this.fireDataTurn[0].Turn != this.userRole"
+            >
+              操作を終了する
+            </button>
           </div>
         </div>
       </div>
@@ -178,10 +214,11 @@ export default {
           Shape: this.newNodeShape,
           User: this.userName,
           Favorited: false,
+          Role: this.userRole,
           CreatedAt: new Date(),
         });
 
-        addDoc(collection(db, "s"), {
+        addDoc(collection(db, "reactions"), {
           MapName: this.mapName,
           User: this.userName,
           NodeID: this.fireData.length,
@@ -234,6 +271,24 @@ export default {
         Favorited: false,
       });
     },
+    async toggleTurn() {
+      const db = getFirestore();
+
+      let updateFirebaseDocID = this.fireDataTurn.filter((turn) => {
+        return turn.MapName == this.mapName;
+      })[0].firebaseID;
+      const updateRef = doc(db, "turns", updateFirebaseDocID);
+
+      if (this.userRole == "donor") {
+        await updateDoc(updateRef, {
+          Turn: "donee",
+        });
+      } else if (this.userRole == "donee") {
+        await updateDoc(updateRef, {
+          Turn: "donor",
+        });
+      }
+    },
   },
   computed: {
     ...mapState(["mapName", "userName", "userRole"]),
@@ -264,6 +319,11 @@ export default {
           if (d.Color) tmp.color = d.Color;
           if (d.Label != "root")
             tmp.color = d.User === this.userName ? "#424dc7" : "#8fa4c7";
+          // if (d.Role === 'donor') {
+          //   tmp.color = "#f00"
+          // } else if (d.Role === 'donee'){
+          //   tmp.color = '#00f'
+          // }
           _nodes[`node${d.ID}`] = tmp;
         });
       }
@@ -451,6 +511,6 @@ export default {
   display: flex;
   flex-direction: row;
   background-color: powderblue;
-  height: 90vh;
+  height: 95vh;
 }
 </style>
