@@ -146,6 +146,33 @@
               操作を終了する
             </button>
           </div>
+
+          <!-- やりとりを終了する -->
+          <div v-if="this.userRole == 'donor'" style="margin-top: 90px">
+            <p
+              style="font-weight: bold;  display: flex; flex-direction: column"
+            >
+              <span>プレゼントが決まったので</span>
+              <span>実験を終了する</span>
+            </p>
+            <div>
+              <input
+                v-model="confirmFinish"
+                type="checkbox"
+                name="confirm"
+                id=""
+              />
+              <label for="confirm">作成を終了します</label>
+            </div>
+            <button
+              @click="finishExperiment()"
+              :disabled="
+                !confirmFinish || this.fireDataTurn[0].Turn != this.userRole
+              "
+            >
+              終了！
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -176,11 +203,14 @@ export default {
   name: "Map",
   data() {
     return {
+      confirmFinish: false,
       eventHandlers: null,
       fireData: null,
       fireDataTurn: null,
+      fireDataReaction: null,
       fireDB: null,
       fireDBTurn: null,
+      fireDBReaction: null,
       loaded: false,
       loadedTurn: false,
       selectedNodeID: null,
@@ -289,6 +319,63 @@ export default {
         });
       }
     },
+    async finishExperiment() {
+      const db = getFirestore();
+
+      let updateFirebaseDocID = this.fireDataTurn.filter((turn) => {
+        return turn.MapName == this.mapName;
+      })[0].firebaseID;
+      const updateRef = doc(db, "turns", updateFirebaseDocID);
+
+      await updateDoc(updateRef, {
+        Turn: "finish",
+      });
+      // Reactionsにログを追加する
+      await addDoc(collection(db, "reactions"), {
+        MapName: this.mapName,
+        User: this.userName,
+        NodeID: this.selectedNodeID,
+        Reaction: "finish",
+        CreatedAt: new Date(),
+      });
+
+      await this.downloadNodesCSV();
+      await this.downloadReactionsCSV();
+    },
+    async downloadNodesCSV() {
+      let csv =
+        "\ufeff" +
+        "ID,Label,MapName,Parent,PosX,PosY,Role,Shape,User,Favorited,firebaseID,CreatedAt\n";
+      this.fireData.forEach((fire) => {
+        let timestamp = fire.CreatedAt
+          ? new Date(fire.CreatedAt.seconds * 1000)
+          : "";
+        let line = `${fire["ID"]},${fire["Label"]},${fire["MapName"]},${fire["Parent"]},${fire["PosX"]},${fire["PosY"]},${fire["Role"]},${fire["Shape"]},${fire["User"]},${fire["Favorited"]},${fire["firebaseID"]},${timestamp}\n`;
+        csv += line;
+      });
+      let blob = new Blob([csv], { type: "text/csv" });
+      let link = document.createElement("a");
+      link.href = window.URL.createObjectURL(blob);
+      link.download = `nodes_${this.mapName}.csv`;
+      link.click();
+    },
+    async downloadReactionsCSV() {
+      let csv =
+        "\ufeff" + "NodeID,MapName,User,Reaction,firebaseID,CreatedAt\n";
+      this.fireDataReaction.forEach((fire) => {
+        let timestamp = fire.CreatedAt
+          ? new Date(fire.CreatedAt.seconds * 1000)
+          : "";
+
+        let line = `${fire["NodeID"]},${fire["MapName"]},${fire["User"]},${fire["Reaction"]},${fire["firebaseID"]},${timestamp}\n`;
+        csv += line;
+      });
+      let blob = new Blob([csv], { type: "text/csv" });
+      let link = document.createElement("a");
+      link.href = window.URL.createObjectURL(blob);
+      link.download = `reactions_${this.mapName}.csv`;
+      link.click();
+    },
   },
   computed: {
     ...mapState(["mapName", "userName", "userRole"]),
@@ -383,6 +470,13 @@ export default {
       await setLoaded(true);
     },
     async fireDataTurn() {
+      if (this.fireDataTurn[0].Turn == "finish") {
+        let donorMessage =
+          this.userRole == "donor"
+            ? "\n OKをクリックしてCSVファイルを2つダウンロードしてください"
+            : "";
+        alert("実験は終了ですお疲れ様でした！" + donorMessage);
+      }
       let setLoaded = async (bool) => {
         this.loadedTurn = bool;
       };
@@ -470,6 +564,24 @@ export default {
         this.loadedTurn = true;
       });
 
+      // 指定したマップ名のreactionsデータを取得する準備
+      const q3 = query(
+        collection(db, "reactions"),
+        where("MapName", "==", this.mapName)
+      );
+      // 指定したマップ名のreactionsデータを取得！
+      this.fireDBReaction = onSnapshot(q3, (querySnapshot) => {
+        this.loadedReaction = false;
+        let tmp = [];
+        querySnapshot.forEach((doc) => {
+          let obj = doc.data();
+          Object.assign(obj, { firebaseID: doc.id });
+          tmp.push(obj);
+        });
+        this.fireDataReaction = tmp;
+        this.loadedReaction = true;
+      });
+
       this.eventHandlers = {
         "node:click": ({ node }) => {
           // 現在選択されているノードのIDを取得
@@ -496,6 +608,7 @@ export default {
   destroyed() {
     this.fireDB();
     this.fireDBTurn();
+    this.fireDBReaction();
   },
 };
 </script>
@@ -506,6 +619,7 @@ export default {
   border: solid 1px;
   padding: 10px;
   width: 300px;
+  overflow-y: scroll;
 }
 .mapContainer {
   display: flex;
